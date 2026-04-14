@@ -2,6 +2,9 @@
 #build
 /dist-server
 
+# Nix build result symlink
+/result
+
 # dependencies
 /node_modules
 **/node_modules/
