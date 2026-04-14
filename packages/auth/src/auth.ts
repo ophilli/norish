@@ -129,7 +129,7 @@ function buildOIDCProviders() {
       providerId: "oidc",
       discoveryUrl:
         oidcProvider.wellknown ||
-        new URL(".well-known/openid-configuration", oidcProvider.issuer).toString(),
+        `${oidcProvider.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
       clientId: oidcProvider.clientId,
       clientSecret: oidcProvider.clientSecret,
       scopes: allScopes,
@@ -139,7 +139,7 @@ function buildOIDCProviders() {
       getUserInfo: async (tokens: { accessToken: string; idToken?: string }) => {
         const discoveryUrl =
           oidcProvider.wellknown ||
-          new URL(".well-known/openid-configuration", oidcProvider.issuer).toString();
+          `${oidcProvider.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`;
 
         const result = await mergeOIDCTokenClaims(tokens, discoveryUrl);
 
