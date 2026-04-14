@@ -106,6 +106,20 @@ in
       '';
     };
 
+    extraSecretEnv = mkOption {
+      type = types.attrsOf types.path;
+      default = { };
+      description = ''
+        Map of environment variable name to secret file path. Each file is
+        loaded via systemd LoadCredential (raw value, no KEY= prefix needed)
+        and exported to the process environment. Use for secrets like
+        OIDC_CLIENT_SECRET that must stay off the Nix store.
+      '';
+      example = literalExpression ''
+        { OIDC_CLIENT_SECRET = config.age.secrets.norish-oidc-secret.path; }
+      '';
+    };
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
@@ -158,9 +172,12 @@ in
         # Load optional extra secrets from file
         EnvironmentFile = lib.optional (cfg.extraEnvFile != null) cfg.extraEnvFile;
 
-        # Load the raw master key and expose it as MASTER_KEY env var.
-        # The key file may contain just the bare base64 value (no KEY= prefix).
-        LoadCredential = "norish-master-key:${cfg.masterKeyFile}";
+        # Load the raw master key and any extra secrets via credentials.
+        # Files may contain bare values (no KEY= prefix needed).
+        LoadCredential = [ "norish-master-key:${cfg.masterKeyFile}" ]
+          ++ lib.mapAttrsToList
+               (name: path: "${lib.toLower (lib.replaceStrings ["_"] ["-"] name)}:${path}")
+               cfg.extraSecretEnv;
 
         # State & uploads live outside the Nix store
         StateDirectory = "norish";
@@ -185,6 +202,9 @@ in
 
       script = ''
         export MASTER_KEY="$(< "$CREDENTIALS_DIRECTORY/norish-master-key")"
+        ${lib.concatStringsSep "\n" (lib.mapAttrsToList (name: _: ''
+          export ${name}="$(< "$CREDENTIALS_DIRECTORY/${lib.toLower (lib.replaceStrings ["_"] ["-"] name)}")"
+        '') cfg.extraSecretEnv)}
         exec ${cfg.package}/bin/norish
       '';
 
