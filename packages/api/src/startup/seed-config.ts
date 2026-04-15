@@ -169,6 +169,7 @@ export async function seedServerConfig(): Promise<void> {
   const seededCount = await seedMissingConfigs();
 
   await importEnvAuthProvidersIfMissing();
+  await syncPasswordAuthFromEnv();
   await syncUnits();
   await syncPrompts();
   await syncLocales();
@@ -264,6 +265,27 @@ function configsDiffer<T extends Record<string, unknown>>(
   };
 
   return normalizeForComparison(stored) !== normalizeForComparison(env);
+}
+
+/**
+ * If PASSWORD_AUTH_ENABLED is explicitly set in the environment, sync that value to the DB
+ * on every startup. This lets the NixOS module (or any operator) declaratively control
+ * password auth without touching the admin UI.
+ * If the env var is absent, the DB value is left untouched.
+ */
+async function syncPasswordAuthFromEnv(): Promise<void> {
+  if (SERVER_CONFIG.PASSWORD_AUTH_ENABLED === undefined) return;
+
+  const desired = SERVER_CONFIG.PASSWORD_AUTH_ENABLED;
+  const current = await getConfig<boolean>(ServerConfigKeys.PASSWORD_AUTH_ENABLED);
+
+  if (current !== desired) {
+    await setConfig(ServerConfigKeys.PASSWORD_AUTH_ENABLED, desired, null, false);
+    serverLogger.info(
+      { enabled: desired },
+      "Password authentication synced from PASSWORD_AUTH_ENABLED env var"
+    );
+  }
 }
 
 /**

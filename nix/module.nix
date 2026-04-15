@@ -84,6 +84,16 @@ in
       '';
     };
 
+    passwordAuthEnabled = mkOption {
+      type = types.nullOr types.bool;
+      default = null;
+      description = ''
+        Whether to allow email/password login. When set, this value is synced
+        to the database on every startup, overriding any admin UI setting.
+        When null (default), the database value is left untouched.
+      '';
+    };
+
     extraEnv = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -158,6 +168,8 @@ in
         SKIP_ENV_VALIDATION = "0";
         # yt-dlp binary from nixpkgs
         YTDLP_PATH = "${pkgs.yt-dlp}/bin/yt-dlp";
+      } // lib.optionalAttrs (cfg.passwordAuthEnabled != null) {
+        PASSWORD_AUTH_ENABLED = if cfg.passwordAuthEnabled then "true" else "false";
       } // cfg.extraEnv;
 
       # Prepend runtime tools to PATH (avoids conflicting with systemd's default PATH)

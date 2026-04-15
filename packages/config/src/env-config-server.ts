@@ -114,7 +114,13 @@ const ServerConfigSchema = z.object({
     .pipe(z.boolean())
     .default(false),
 
-  AI_ENABLED: z
+  PASSWORD_AUTH_ENABLED: z
+    .string()
+    .transform((val) => val === "true" || val === "1")
+    .pipe(z.boolean())
+    .optional(),
+
+AI_ENABLED: z
     .string()
     .transform((val) => val === "true" || val === "1")
     .pipe(z.boolean())
