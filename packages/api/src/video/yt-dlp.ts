@@ -1,21 +1,23 @@
-import type { SiteAuthTokenDecryptedDto } from "@norish/shared/contracts/dto/site-auth-tokens";
-import type { VideoMetadata } from "./types";
-
-import { execSync } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
+import { promisify } from "node:util";
 import YTDlpWrapModule from "yt-dlp-wrap";
-import { videoLogger as log } from "@norish/shared-server/logger";
+
+import type { SiteAuthTokenDecryptedDto } from "@norish/shared/contracts/dto/site-auth-tokens";
 import { SERVER_CONFIG } from "@norish/config/env-config-server";
 import { getVideoConfig } from "@norish/config/server-config-loader";
+import { videoLogger as log } from "@norish/shared-server/logger";
 
+import type { VideoMetadata } from "./types";
 
 // Handle CJS/ESM interop - the module may be wrapped in a default property
 const YTDlpWrap =
   (YTDlpWrapModule as unknown as { default?: typeof YTDlpWrapModule }).default ?? YTDlpWrapModule;
+
+const execFileAsync = promisify(execFile);
 
 // Resolve ffmpeg path at runtime
 // In production (Docker), uses system ffmpeg from Alpine packages
@@ -110,6 +112,38 @@ export const DOWNLOAD_VIDEO_FORMAT_SELECTOR =
 // In development, download to the configured runtime bin directory on first use
 const ytDlpPath = path.resolve(SERVER_CONFIG.YT_DLP_BIN_DIR, ytDlpFilename);
 const outputDir = path.join(SERVER_CONFIG.UPLOADS_DIR, "video-temp");
+
+async function execYtDlp(args: string[], cwd?: string): Promise<void> {
+  try {
+    await execFileAsync(ytDlpPath, args, {
+      cwd,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (error: unknown) {
+    const childError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer };
+    const stderr = childError.stderr?.toString().trim();
+    const stdout = childError.stdout?.toString().trim();
+    const details = [childError.message];
+
+    if (stderr) {
+      details.push(`Stderr:\n${stderr}`);
+    }
+
+    if (stdout) {
+      details.push(`Stdout:\n${stdout}`);
+    }
+
+    throw new Error(details.join("\n\n"));
+  }
+}
+
+async function getProxyArgs(): Promise<string[]> {
+  const videoConfig = await getVideoConfig();
+  const proxy = videoConfig?.ytDlpProxy || SERVER_CONFIG.YT_DLP_PROXY;
+
+  return proxy ? ["--proxy", proxy] : [];
+}
 
 export async function ensureYtDlpBinary(): Promise<void> {
   log.debug({ ytDlpPath }, "Checking for binary");
@@ -237,9 +271,8 @@ export async function getVideoMetadata(
   const auth = tokens?.length ? await buildAuthArgs(tokens, url) : null;
 
   try {
-    const rawInfo = auth
-      ? await ytDlpWrap.getVideoInfo([url, ...auth.args])
-      : await ytDlpWrap.getVideoInfo(url);
+    const proxyArgs = await getProxyArgs();
+    const rawInfo = await ytDlpWrap.getVideoInfo([url, ...(auth?.args ?? []), ...proxyArgs]);
 
     // yt-dlp returns an array for Instagram carousel/image posts (one entry per image)
     // For single videos, it returns an object directly
@@ -284,10 +317,10 @@ export async function downloadVideoAudio(
   await ensureYtDlpBinary();
   await fs.mkdir(outputDir, { recursive: true });
 
-  const ytDlpWrap = new YTDlpWrap(ytDlpPath);
   const timestamp = Date.now();
   const randomId = Math.random().toString(36).substring(7);
-  const outputFile = path.join(outputDir, `audio-${timestamp}-${randomId}.wav`);
+  const outputFilename = `audio-${timestamp}-${randomId}.wav`;
+  const outputFile = path.join(outputDir, outputFilename);
 
   const auth = tokens?.length ? await buildAuthArgs(tokens, url) : null;
 
@@ -297,6 +330,7 @@ export async function downloadVideoAudio(
     const ffmpegDir = ffmpegBinary ? path.dirname(ffmpegBinary) : undefined;
 
     log.debug({ ffmpegDir, ffmpegBinary }, "Using ffmpeg for audio extraction");
+    const proxyArgs = await getProxyArgs();
 
     const args = [
       url,
@@ -306,10 +340,11 @@ export async function downloadVideoAudio(
       "--audio-quality",
       "0", // Best quality
       "-o",
-      outputFile, // Output file
+      outputFilename, // Output file, relative to outputDir
       "--extractor-args",
       "youtube:player_client=default", // Suppress JS runtime warning
       ...(auth?.args ?? []),
+      ...proxyArgs,
     ];
 
     // Add ffmpeg location if available
@@ -317,7 +352,7 @@ export async function downloadVideoAudio(
       args.push("--ffmpeg-location", ffmpegDir);
     }
 
-    await ytDlpWrap.execPromise(args);
+    await execYtDlp(args, outputDir);
     try {
       await fs.stat(outputFile);
     } catch {
@@ -397,10 +432,9 @@ export async function downloadCaptions(
   await ensureYtDlpBinary();
   await fs.mkdir(outputDir, { recursive: true });
 
-  const ytDlpWrap = new YTDlpWrap(ytDlpPath);
   const timestamp = Date.now();
   const randomId = Math.random().toString(36).substring(7);
-  const outputTemplate = path.join(outputDir, `caption-${timestamp}-${randomId}`);
+  const outputTemplate = `caption-${timestamp}-${randomId}`;
 
   const auth = tokens?.length ? await buildAuthArgs(tokens, url) : null;
 
@@ -422,9 +456,10 @@ export async function downloadCaptions(
       "--extractor-args",
       "youtube:player_client=default",
       ...(auth?.args ?? []),
+      ...(await getProxyArgs()),
     ];
 
-    await ytDlpWrap.execPromise(args);
+    await execYtDlp(args, outputDir);
 
     // Find the downloaded VTT file (yt-dlp adds language suffix)
     const files = await fs.readdir(outputDir);
@@ -530,11 +565,10 @@ export async function downloadVideo(
   await ensureYtDlpBinary();
   await fs.mkdir(outputDir, { recursive: true });
 
-  const ytDlpWrap = new YTDlpWrap(ytDlpPath);
   const timestamp = Date.now();
   const randomId = Math.random().toString(36).substring(7);
   // Use a template that yt-dlp will fill in with the actual extension
-  const outputTemplate = path.join(outputDir, `video-${timestamp}-${randomId}.%(ext)s`);
+  const outputTemplate = `video-${timestamp}-${randomId}.%(ext)s`;
 
   const auth = tokens?.length ? await buildAuthArgs(tokens, url) : null;
 
@@ -554,6 +588,7 @@ export async function downloadVideo(
       "--extractor-args",
       "youtube:player_client=default",
       ...(auth?.args ?? []),
+      ...(await getProxyArgs()),
     ];
 
     // Add ffmpeg location if available
@@ -561,7 +596,7 @@ export async function downloadVideo(
       args.push("--ffmpeg-location", ffmpegDir);
     }
 
-    await ytDlpWrap.execPromise(args);
+    await execYtDlp(args, outputDir);
 
     // Find the actual output file (yt-dlp fills in the extension)
     const basePattern = `video-${timestamp}-${randomId}`;

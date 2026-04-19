@@ -1,7 +1,8 @@
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
-
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
+
 import { SERVER_CONFIG } from "@norish/config/env-config-server";
 
 import * as schema from "./schema";
@@ -42,4 +43,18 @@ export async function resetDbConnection() {
   }
 
   _db = null;
+}
+
+export async function getDatabaseHealth() {
+  try {
+    await db.execute(sql`select 1`);
+
+    return {
+      status: "ok" as const,
+    };
+  } catch {
+    return {
+      status: "error" as const,
+    };
+  }
 }
