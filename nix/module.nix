@@ -173,7 +173,7 @@ in
       } // cfg.extraEnv;
 
       # Prepend runtime tools to PATH (avoids conflicting with systemd's default PATH)
-      path = [ pkgs.ffmpeg pkgs.nodejs_22 pkgs.coreutils ];
+      path = [ pkgs.ffmpeg-headless pkgs.nodejs_22 pkgs.coreutils ];
 
       serviceConfig = {
         Type = "simple";

@@ -23,7 +23,7 @@
             pnpm = pkgs.pnpm_10;
             inherit (finalAttrs) pname version src;
             fetcherVersion = 3;
-            hash = "sha256-z6ssO0GFiwCKO8z/dLr6Ua6CmwBejOEpTUdM9ArcpUk=";
+            hash = "sha256-M6XhQieqoKaJD7RHFSudpln3tgMTEPbmUc7T2UL0sVQ=";
           };
 
           nativeBuildInputs = with pkgs; [
@@ -130,6 +130,17 @@ EOF
             cp -r packages "$dest/packages"
             find "$dest/packages" -mindepth 2 -maxdepth 2 -type d -name "node_modules" \
               -exec rm -rf {} + 2>/dev/null || true
+
+            # Turbopack links server externals into .next/node_modules; some of
+            # those links point into the package node_modules removed above
+            # (e.g. ws -> packages/trpc/node_modules/ws). Replace any dangling
+            # link with a real copy from the build tree.
+            find "$dest/apps/web/.next/node_modules" -xtype l -print0 2>/dev/null |
+              while IFS= read -r -d "" link; do
+                rel="''${link#"$dest/"}"
+                rm "$link"
+                cp -rL "$rel" "$link"
+              done
 
             # Static Next.js assets are not inside the standalone trace
             cp -r apps/web/.next/static "$dest/apps/web/.next/static"
