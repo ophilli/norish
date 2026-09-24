@@ -14,6 +14,16 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # Runtime for the embedded parser API (apps/parser-api). The server
+        # starts it from apps/parser-api/.venv/bin/python; nixpkgs stands in
+        # for the uv venv that the Docker image builds from uv.lock.
+        parserPython = pkgs.python314.withPackages (ps: with ps; [
+          beautifulsoup4
+          fastapi
+          recipe-scrapers
+          uvicorn
+        ]);
+
         norish = pkgs.stdenv.mkDerivation (finalAttrs: {
           pname = "norish";
           version = "0.17.3-beta";
@@ -121,6 +131,15 @@ EOF
 
             # Root package.json (read by next.config.js for the app version)
             install -m644 package.json "$dest/package.json"
+
+            # The server finds the workspace root by walking up from its cwd to
+            # pnpm-workspace.yaml (@norish/shared-server) and exits without it.
+            install -m644 pnpm-workspace.yaml "$dest/pnpm-workspace.yaml"
+
+            # Embedded parser API (FastAPI + recipe-scrapers)
+            mkdir -p "$dest/apps/parser-api"
+            cp -r apps/parser-api/app "$dest/apps/parser-api/app"
+            ln -s ${parserPython} "$dest/apps/parser-api/.venv"
 
             # packages/ directory contains runtime data files
             # (e.g. Drizzle migration SQL files, AI prompt templates).
